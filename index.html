@@ -12,22 +12,28 @@
       position: absolute; top: 20px; left: 20px;
       font-size: 20px; font-weight: bold; pointer-events: none;
       text-shadow: 0 0 10px rgba(0,255,200,0.5);
+      display: flex; flex-direction: column; gap: 8px;
     }
+    .online-count { color: #00e682; }
   </style>
 </head>
 <body>
 
-  <div id="ui">Счёт: <span id="score">0</span></div>
+  <div id="ui">
+    <div>Счёт: <span id="score">0</span></div>
+    <div class="online-count">Игроков онлайн: <span id="online">1</span></div>
+  </div>
   <canvas id="gameCanvas"></canvas>
 
   <script>
-    // Общий уникальный топик ntfy для тебя и друга
+    // Уникальная комната ntfy
     const NTFY_TOPIC = "snake_io_danya_room_1337";
     const NTFY_URL = `https://ntfy.sh/${NTFY_TOPIC}`;
 
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
     const scoreEl = document.getElementById('score');
+    const onlineEl = document.getElementById('online');
 
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
@@ -56,7 +62,6 @@
     let players = {};
     let foods = [];
 
-    // Генерируем еду
     for (let i = 0; i < 150; i++) {
       foods.push({
         id: i,
@@ -72,13 +77,14 @@
       mouse.y = e.clientY;
     });
 
-    // --- ПОДКЛЮЧЕНИЕ К NTFY (Получение данных других игроков) ---
+    // === ПОДКЛЮЧЕНИЕ К NTFY ДЛЯ ПОЛУЧЕНИЯ ДАННЫХ ===
     const eventSource = new EventSource(`${NTFY_URL}/sse`);
+    
     eventSource.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data);
-        if (data.message) {
-          const payload = JSON.parse(data.message);
+        const rawData = JSON.parse(event.data);
+        if (rawData.message) {
+          const payload = JSON.parse(rawData.message);
           if (payload.id && payload.id !== myId) {
             players[payload.id] = { ...payload, lastSeen: Date.now() };
           }
@@ -86,7 +92,7 @@
       } catch (e) {}
     };
 
-    // --- ОТПРАВКА СВОИХ КООРДИНАТ В NTFY ---
+    // === ОТПРАВКА СВОИХ КООРДИНАТ (10 РАЗ В СЕКУНДУ) ===
     setInterval(() => {
       const payload = {
         id: myId,
@@ -96,83 +102,27 @@
         angle: angle
       };
 
+      // Прямая отправка через fetch
       fetch(NTFY_URL, {
         method: 'POST',
+        mode: 'cors',
+        headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify(payload)
       }).catch(() => {});
-    }, 100); // 10 раз в секунду
+    }, 100);
 
-    // Очистка игроков, которые вышли или давно не обновлялись
+    // === ПРОВЕРКА ОНЛАЙНА И УДАЛЕНИЕ НЕАКТИВНЫХ ИГРОКОВ ===
     setInterval(() => {
       const now = Date.now();
+      let activeCount = 1; // Считаем себя
+
       Object.keys(players).forEach(id => {
-        if (now - players[id].lastSeen > 3000) {
+        // Если от игрока не было сообщений больше 2.5 секунд — он вышел
+        if (now - players[id].lastSeen > 2500) {
           delete players[id];
+        } else {
+          activeCount++;
         }
       });
-    }, 1000);
 
-    // Главный игровой цикл
-    function gameLoop() {
-      const centerX = canvas.width / 2;
-      const centerY = canvas.height / 2;
-      angle = Math.atan2(mouse.y - centerY, mouse.x - centerX);
-
-      myHead.x += Math.cos(angle) * 3.5;
-      myHead.y += Math.sin(angle) * 3.5;
-
-      myHead.x = Math.max(20, Math.min(MAP_SIZE - 20, myHead.x));
-      myHead.y = Math.max(20, Math.min(MAP_SIZE - 20, myHead.y));
-
-      let leader = myHead;
-      for (let seg of mySegments) {
-        let dx = leader.x - seg.x;
-        let dy = leader.y - seg.y;
-        let dist = Math.hypot(dx, dy);
-        if (dist > 10) {
-          seg.x += (dx / dist) * (dist - 10);
-          seg.y += (dy / dist) * (dist - 10);
-        }
-        leader = seg;
-      }
-
-      for (let f of foods) {
-        if (Math.hypot(myHead.x - f.x, myHead.y - f.y) < 14 + f.size) {
-          f.x = Math.random() * MAP_SIZE;
-          f.y = Math.random() * MAP_SIZE;
-          myScore += 10;
-          scoreEl.innerText = myScore;
-          
-          let last = mySegments[mySegments.length - 1];
-          mySegments.push({ x: last.x, y: last.y });
-        }
-      }
-
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      const camX = myHead.x - canvas.width / 2;
-      const camY = myHead.y - canvas.height / 2;
-
-      ctx.save();
-      ctx.translate(-camX, -camY);
-
-      // Сетка
-      ctx.strokeStyle = '#181e2e';
-      ctx.lineWidth = 2;
-      for (let x = 0; x < MAP_SIZE; x += 100) {
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, MAP_SIZE); ctx.stroke();
-      }
-      for (let y = 0; y < MAP_SIZE; y += 100) {
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(MAP_SIZE, y); ctx.stroke();
-      }
-
-      // Еда
-      foods.forEach(f => {
-        ctx.beginPath();
-        ctx.arc(f.x, f.y, f.size, 0, Math.PI * 2);
-        ctx.fillStyle = f.color;
-        ctx.fill();
-      });
-
-      function drawSnake(head, segments, color, eyeAngle) {
-        for (let i = segments.length - 1; i >= 0; i
+      onlineEl.innerText = activeCount
