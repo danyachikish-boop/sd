@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Snake.io P2P Online</title>
+  <title>Snake.io Real Online</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #0d0f17; color: #fff; font-family: sans-serif; overflow: hidden; }
-    #gameCanvas { display: block; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #0d0f17; color: #fff; font-family: sans-serif; }
+    #gameCanvas { display: block; width: 100vw; height: 100vh; }
     #ui {
       position: absolute; top: 20px; left: 20px;
       font-size: 18px; font-weight: bold; pointer-events: none;
@@ -24,21 +24,21 @@
       padding: 12px 20px; font-size: 16px; border-radius: 8px; border: none; outline: none;
     }
     input { background: #1a1e2b; color: #fff; border: 1px solid #00e682; text-align: center; }
-    button { background: #00e682; color: #000; font-weight: bold; cursor: pointer; transition: 0.2s; }
-    button:hover { transform: scale(1.05); }
+    button { background: #00e682; color: #000; font-weight: bold; cursor: pointer; }
+    button:hover { opacity: 0.9; }
   </style>
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 </head>
 <body>
 
   <div id="lobby">
-    <h1>Snake.io P2P</h1>
-    <p>Мой ID комнаты: <b id="myPeerId" style="color:#00e682;">Создание...</b></p>
+    <h1>Snake.io Online (P2P)</h1>
+    <p>Твой ID комнаты: <b id="myPeerId" style="color:#00e682;">Подключение...</b></p>
     <div style="display:flex; gap:10px;">
       <input type="text" id="joinIdInput" placeholder="Введи ID друга">
       <button onclick="connectToFriend()">Подключиться к другу</button>
     </div>
-    <button onclick="startGameAlone()" style="background:#3296ff; color:#fff;">Играть одному / Ожидать друга</button>
+    <button onclick="startGameAlone()" style="background:#3296ff; color:#fff;">Играть соло / Ждать друга</button>
   </div>
 
   <div id="ui">
@@ -54,27 +54,24 @@
     const onlineEl = document.getElementById('online');
     const lobbyEl = document.getElementById('lobby');
 
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    window.addEventListener('resize', () => {
+    function resize() {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
-    });
+    }
+    resize();
+    window.addEventListener('resize', resize);
 
     const MAP_SIZE = 2500;
     const myId = 'player_' + Math.random().toString(36).substr(2, 6);
     const myColor = `hsl(${Math.floor(Math.random() * 360)}, 80%, 50%)`;
 
     let mouse = { x: canvas.width / 2, y: canvas.height / 2 };
-    let myHead = {
-      x: Math.random() * (MAP_SIZE - 400) + 200,
-      y: Math.random() * (MAP_SIZE - 400) + 200
-    };
+    let myHead = { x: MAP_SIZE / 2, y: MAP_SIZE / 2 };
     let mySegments = [];
     let myScore = 0;
     let angle = 0;
 
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 12; i++) {
       mySegments.push({ x: myHead.x - i * 10, y: myHead.y });
     }
 
@@ -82,9 +79,8 @@
     let foods = [];
     let connections = [];
 
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < 200; i++) {
       foods.push({
-        id: i,
         x: Math.random() * MAP_SIZE,
         y: Math.random() * MAP_SIZE,
         color: ['#ff4b4b', '#ffc832', '#3296ff', '#e650fa', '#00e682'][Math.floor(Math.random() * 5)],
@@ -97,14 +93,13 @@
       mouse.y = e.clientY;
     });
 
-    // --- PEERJS СЕТЕВАЯ ЧАСТЬ ---
+    // === WebRTC Сеть (PeerJS) ===
     const peer = new Peer(myId);
 
     peer.on('open', id => {
       document.getElementById('myPeerId').innerText = id;
     });
 
-    // Когда к нам кто-то подключается
     peer.on('connection', conn => {
       setupConnection(conn);
     });
@@ -137,7 +132,6 @@
       lobbyEl.style.display = 'none';
     }
 
-    // Отправка своих координат напрямую всем подключенным игрокам
     setInterval(() => {
       const payload = {
         id: myId,
@@ -154,7 +148,6 @@
       onlineEl.innerText = connections.length + 1;
     }, 40);
 
-    // Главный игровой цикл
     function gameLoop() {
       const centerX = canvas.width / 2;
       const centerY = canvas.height / 2;
@@ -199,61 +192,4 @@
       ctx.translate(-camX, -camY);
 
       // Сетка
-      ctx.strokeStyle = '#181e2e';
-      ctx.lineWidth = 2;
-      for (let x = 0; x < MAP_SIZE; x += 100) {
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, MAP_SIZE); ctx.stroke();
-      }
-      for (let y = 0; y < MAP_SIZE; y += 100) {
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(MAP_SIZE, y); ctx.stroke();
-      }
-
-      // Еда
-      foods.forEach(f => {
-        ctx.beginPath();
-        ctx.arc(f.x, f.y, f.size, 0, Math.PI * 2);
-        ctx.fillStyle = f.color;
-        ctx.fill();
-      });
-
-      function drawSnake(head, segments, color, eyeAngle) {
-        for (let i = segments.length - 1; i >= 0; i--) {
-          ctx.beginPath();
-          ctx.arc(segments[i].x, segments[i].y, 12, 0, Math.PI * 2);
-          ctx.fillStyle = color;
-          ctx.fill();
-        }
-        ctx.beginPath();
-        ctx.arc(head.x, head.y, 14, 0, Math.PI * 2);
-        ctx.fillStyle = color;
-        ctx.fill();
-
-        const e1X = head.x + Math.cos(eyeAngle + 0.5) * 6;
-        const e1Y = head.y + Math.sin(eyeAngle + 0.5) * 6;
-        const e2X = head.x + Math.cos(eyeAngle - 0.5) * 6;
-        const e2Y = head.y + Math.sin(eyeAngle - 0.5) * 6;
-
-        ctx.fillStyle = '#fff';
-        ctx.beginPath(); ctx.arc(e1X, e1Y, 3, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.arc(e2X, e2Y, 3, 0, Math.PI * 2); ctx.fill();
-      }
-
-      // Отрисовка себя
-      drawSnake(myHead, mySegments, myColor, angle);
-
-      // Отрисовка подключавшихся игроков
-      Object.values(players).forEach(p => {
-        if (p.head && p.segments) {
-          drawSnake(p.head, p.segments, p.color, p.angle);
-        }
-      });
-
-      ctx.restore();
-
-      requestAnimationFrame(gameLoop);
-    }
-
-    gameLoop();
-  </script>
-</body>
-</html>
+      ctx.
