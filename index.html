@@ -3,9 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Snake.io P2P Online</title>
-    <!-- Подключаем PeerJS для прямого соединения игроков -->
-    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <title>Snake.io Flask Online</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; overflow: hidden; }
         body { background: #1a1a2e; font-family: 'Arial', sans-serif; color: white; }
@@ -43,7 +42,7 @@
     <div class="ui top-left">
         <div class="score">Длина: <span id="score">10</span></div>
         <div style="font-size: 12px; color: rgba(255,255,255,0.5); margin-top: 5px;">
-            Игроков в комнате: <span id="playerCount">1</span>
+            Игроков онлайн: <span id="playerCount">1</span>
         </div>
     </div>
 
@@ -68,17 +67,19 @@
     <div class="coords" id="coords">X: 0 Y: 0</div>
 
     <div class="menu" id="menu">
-        <h1>SNAKE.IO P2P</h1>
+        <h1>SNAKE.IO</h1>
         <input type="text" class="menu-input" id="nickInput" placeholder="Твой ник" value="Player" maxlength="15">
-        <input type="text" class="menu-input" id="roomInput" placeholder="Название комнаты" value="snake-room-1">
+        <input type="text" class="menu-input" id="roomInput" placeholder="Комната" value="snakeio">
         <button class="menu-btn" onclick="startGame()">ИГРАТЬ</button>
-        <div style="margin-top: 30px; color: rgba(255,255,255,0.5); font-size: 14px; text-align: center;">
-            🔗 Введите одинаковое название комнаты с другом для подключения :)<br>
-            🖱️ Мышь — направление | ЛКМ/Пробел — ускорение
+        <div style="margin-top: 30px; color: rgba(255,255,255,0.5); font-size: 14px;">
+            🖱️ Мышь — направление | ЛКМ/Пробел — ускорение<br>
+            💀 Врезайся в других чтобы уничтожить их<br>
+            ⚡ Ускорение уменьшает длину
         </div>
     </div>
 
     <script>
+        const socket = io();
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         
@@ -89,12 +90,12 @@
         const BOOST_COST = 0.5;
         
         let player = {
-            id: 'p_' + Math.random().toString(36).substr(2, 9),
+            id: null,
             name: '',
             segments: [],
             angle: 0,
             radius: BASE_RADIUS,
-            color: `hsl(${Math.random() * 360}, 70%, 50%)`,
+            color: '#00ff88',
             score: 10,
             boosting: false,
             dead: false,
@@ -108,12 +109,6 @@
         let particles = [];
         let mouseX = 0, mouseY = 0;
         
-        // P2P Переменные
-        let peer = null;
-        let connections = {};
-        let isHost = false;
-        let roomName = '';
-
         function resize() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
@@ -133,152 +128,49 @@
         
         function startGame() {
             player.name = document.getElementById('nickInput').value || 'Player';
-            roomName = 'snakeio_' + (document.getElementById('roomInput').value || 'default');
+            const room = document.getElementById('roomInput').value || 'snakeio';
             
+            socket.emit('join', { name: player.name, room });
             document.getElementById('menu').classList.add('hidden');
+        }
+
+        socket.on('init', (data) => {
+            player.id = data.id;
+            foods = data.foods;
             initSnake();
-            setupP2P();
             gameLoop();
-        }
+        });
 
-        // Инициализация PeerJS соединения
-        function setupP2P() {
-            // Создаем уникальный ID на основе комнаты и случайного суффикса
-            peer = new Peer();
-
-            peer.on('open', (id) => {
-                console.log('My Peer ID:', id);
-                // Пытаемся подключиться к хосту комнаты с фиксированным префиксом имени
-                connectToHost();
-            });
-
-            peer.on('connection', (conn) => {
-                setupConnection(conn);
-            });
-        }
-
-        function getHostId() {
-            return roomName + '_host';
-        }
-
-        function connectToHost() {
-            // Первый кто зашел в комнату становится хостом (пробует занять хост-ID)
-            const hostPeer = new Peer(getHostId());
-
-            hostPeer.on('open', () => {
-                isHost = true;
-                console.log('Я хост этой комнаты!');
-                // Создаем начальную еду для хоста
-                for (let i = 0; i < 500; i++) {
-                    foods.push({
-                        id: Math.random().toString(36).substr(2, 9),
-                        x: Math.random() * WORLD_SIZE,
-                        y: Math.random() * WORLD_SIZE,
-                        color: `hsl(${Math.random() * 360}, 70%, 60%)`,
-                        radius: 3 + Math.random() * 5
-                    });
-                }
-            });
-
-            hostPeer.on('error', (err) => {
-                // Если хост уже занят, значит мы клиент — коннектимся к нему
-                if (err.type === 'unavailable-id') {
-                    isHost = false;
-                    console.log('Подключаемся к хосту комнаты...');
-                    const conn = peer.connect(getHostId());
-                    setupConnection(conn);
-                }
-            });
-
-            hostPeer.on('connection', (conn) => {
-                setupConnection(conn);
-            });
-        }
-
-        function setupConnection(conn) {
-            conn.on('open', () => {
-                connections[conn.peer] = conn;
-                // Приветствуем игрока/хоста
-                conn.send({
-                    type: 'join',
-                    player: player
-                });
-                if (isHost) {
-                    // Отправляем текущую еду новому игроку
-                    conn.send({ type: 'init_food', foods: foods });
-                }
-            });
-
-            conn.on('data', (data) => {
-                handleNetworkData(data, conn.peer);
-            });
-
-            conn.on('close', () => {
-                delete others[conn.peer];
-                delete connections[conn.peer];
-            });
-        }
-
-        function broadcast(data) {
-            for (let id in connections) {
-                connections[id].send(data);
+        socket.on('state', (serverPlayers) => {
+            others = serverPlayers;
+            if (player.id && others[player.id]) {
+                delete others[player.id];
             }
-        }
+        });
 
-        function handleNetworkData(data, peerId) {
-            if (data.type === 'join') {
-                others[data.player.id] = data.player;
-                // Если мы хост, пересылаем нового игрока остальным
-                if (isHost) {
-                    broadcast({ type: 'join', player: data.player });
-                }
-            } else if (data.type === 'init_food') {
-                if (!isHost) foods = data.foods;
-            } else if (data.type === 'update') {
-                others[data.player.id] = { ...data.player, lastUpdate: Date.now() };
-                if (isHost) broadcast(data); // Хост ретранслирует движение дальше
-            } else if (data.type === 'eat_food') {
-                foods = foods.filter(f => f.id !== data.foodId);
-                if (isHost) {
-                    const newFood = {
-                        id: Math.random().toString(36).substr(2, 9),
-                        x: Math.random() * WORLD_SIZE,
-                        y: Math.random() * WORLD_SIZE,
-                        color: `hsl(${Math.random() * 360}, 70%, 60%)`,
-                        radius: 3 + Math.random() * 5
-                    };
-                    foods.push(newFood);
-                    broadcast({ type: 'spawn_food', food: newFood, removedId: data.foodId });
-                }
-            } else if (data.type === 'spawn_food') {
-                foods = foods.filter(f => f.id !== data.removedId);
-                foods.push(data.food);
-            } else if (data.type === 'death') {
-                if (data.segments) {
-                    data.segments.forEach(seg => {
-                        foods.push({
-                            id: Math.random().toString(36).substr(2, 9),
-                            x: seg.x + (Math.random() - 0.5) * 20,
-                            y: seg.y + (Math.random() - 0.5) * 20,
-                            color: data.color,
-                            radius: 5 + Math.random() * 5
-                        });
-                    });
-                }
-                addChatMessage('', `💀 ${data.name} погиб!`, true);
-                if (isHost) broadcast(data);
-            } else if (data.type === 'chat') {
-                addChatMessage(data.name, data.text, false);
-                if (isHost) broadcast(data);
-            }
-        }
+        socket.on('foodEaten', (data) => {
+            foods = foods.filter(f => f.id !== data.removedId);
+            foods.push(data.newFood);
+        });
+
+        socket.on('playerDeath', (data) => {
+            data.droppedFood.forEach(f => foods.push(f));
+            addChatMessage('', `💀 ${data.name} погиб!`, true);
+        });
+
+        socket.on('playerLeave', (id) => {
+            delete others[id];
+        });
+
+        socket.on('chat', (data) => {
+            addChatMessage(data.name, data.text, false);
+        });
 
         function sendChat() {
             const input = document.getElementById('chatInput');
             const text = input.value.trim();
             if (!text) return;
-            addChatMessage(player.name, text, true);
-            broadcast({ type: 'chat', name: player.name, text: text });
+            socket.emit('chat', text);
             input.value = '';
         }
         
@@ -310,8 +202,6 @@
         document.addEventListener('keydown', (e) => { if (e.code === 'Space') player.boosting = true; });
         document.addEventListener('keyup', (e) => { if (e.code === 'Space') player.boosting = false; });
         
-        let lastBroadcast = 0;
-
         function update() {
             if (player.dead) return;
             
@@ -349,18 +239,15 @@
                 player.segments.pop();
             }
             
-            // Сбор еды
             for (let i = foods.length - 1; i >= 0; i--) {
                 const food = foods[i];
                 if (Math.hypot(newHead.x - food.x, newHead.y - food.y) < player.radius + food.radius) {
                     player.score += Math.floor(food.radius);
-                    foods.splice(i, 1);
-                    broadcast({ type: 'eat_food', foodId: food.id });
+                    socket.emit('eatFood', food.id);
                     break;
                 }
             }
             
-            // Столкновения
             for (let id in others) {
                 const other = others[id];
                 if (!other.segments) continue;
@@ -383,31 +270,19 @@
             updateLeaderboard();
             updateParticles();
 
-            // Отправка данных по сети каждые 50мс
-            if (Date.now() - lastBroadcast > 50) {
-                broadcast({
-                    type: 'update',
-                    player: {
-                        id: player.id,
-                        name: player.name,
-                        segments: player.segments.slice(0, 25),
-                        color: player.color,
-                        score: player.score,
-                        boosting: player.boosting
-                    }
-                });
-                lastBroadcast = Date.now();
-            }
+            socket.emit('update', {
+                x: player.x,
+                y: player.y,
+                angle: player.angle,
+                score: player.score,
+                segments: player.segments.slice(0, 30),
+                boosting: player.boosting
+            });
         }
         
         function die() {
             player.dead = true;
-            broadcast({
-                type: 'death',
-                name: player.name,
-                segments: player.segments,
-                color: player.color
-            });
+            socket.emit('die', player.segments);
             addChatMessage('', `💀 ${player.name} погиб!`, true);
             
             setTimeout(() => {
