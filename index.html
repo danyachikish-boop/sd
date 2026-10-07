@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Snake.io Online</title>
+  <title>Snake.io Online (ntfy)</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #0d0f17; color: #fff; font-family: sans-serif; overflow: hidden; }
@@ -14,7 +14,6 @@
       text-shadow: 0 0 10px rgba(0,255,200,0.5);
     }
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
@@ -22,11 +21,9 @@
   <canvas id="gameCanvas"></canvas>
 
   <script>
-    // Встроенные ключи из твоего кабинета Supabase
-    const SUPABASE_URL = "https://uqyrjxabimivgusqqvts.supabase.co";
-    const SUPABASE_ANON_KEY = "sb_publishable_fuYKNKGWY3C1sEpawVbwjg_Mjl0j..."; // Подставь сюда полный ключ из буфера обмена
-
-    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    // Общий уникальный топик ntfy для тебя и друга
+    const NTFY_TOPIC = "snake_io_danya_room_1337";
+    const NTFY_URL = `https://ntfy.sh/${NTFY_TOPIC}`;
 
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
@@ -40,13 +37,13 @@
     });
 
     const MAP_SIZE = 2500;
-    const myId = 'player_' + Math.random().toString(36).substr(2, 9);
+    const myId = 'player_' + Math.random().toString(36).substr(2, 7);
     const myColor = `hsl(${Math.floor(Math.random() * 360)}, 80%, 50%)`;
 
     let mouse = { x: canvas.width / 2, y: canvas.height / 2 };
     let myHead = {
-      x: Math.random() * (MAP_SIZE - 200) + 100,
-      y: Math.random() * (MAP_SIZE - 200) + 100
+      x: Math.random() * (MAP_SIZE - 400) + 200,
+      y: Math.random() * (MAP_SIZE - 400) + 200
     };
     let mySegments = [];
     let myScore = 0;
@@ -59,6 +56,7 @@
     let players = {};
     let foods = [];
 
+    // Генерируем еду
     for (let i = 0; i < 150; i++) {
       foods.push({
         id: i,
@@ -74,30 +72,47 @@
       mouse.y = e.clientY;
     });
 
-    const channel = supabaseClient.channel('game-room', {
-      config: { broadcast: { self: false } }
-    });
+    // --- ПОДКЛЮЧЕНИЕ К NTFY (Получение данных других игроков) ---
+    const eventSource = new EventSource(`${NTFY_URL}/sse`);
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.message) {
+          const payload = JSON.parse(data.message);
+          if (payload.id && payload.id !== myId) {
+            players[payload.id] = { ...payload, lastSeen: Date.now() };
+          }
+        }
+      } catch (e) {}
+    };
 
-    channel.on('broadcast', { event: 'player-update' }, payload => {
-      players[payload.id] = payload;
-    });
-
-    channel.subscribe();
-
+    // --- ОТПРАВКА СВОИХ КООРДИНАТ В NTFY ---
     setInterval(() => {
-      channel.send({
-        type: 'broadcast',
-        event: 'player-update',
-        payload: {
-          id: myId,
-          head: myHead,
-          segments: mySegments,
-          color: myColor,
-          angle: angle
+      const payload = {
+        id: myId,
+        head: myHead,
+        segments: mySegments,
+        color: myColor,
+        angle: angle
+      };
+
+      fetch(NTFY_URL, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      }).catch(() => {});
+    }, 100); // 10 раз в секунду
+
+    // Очистка игроков, которые вышли или давно не обновлялись
+    setInterval(() => {
+      const now = Date.now();
+      Object.keys(players).forEach(id => {
+        if (now - players[id].lastSeen > 3000) {
+          delete players[id];
         }
       });
-    }, 40);
+    }, 1000);
 
+    // Главный игровой цикл
     function gameLoop() {
       const centerX = canvas.width / 2;
       const centerY = canvas.height / 2;
@@ -141,6 +156,7 @@
       ctx.save();
       ctx.translate(-camX, -camY);
 
+      // Сетка
       ctx.strokeStyle = '#181e2e';
       ctx.lineWidth = 2;
       for (let x = 0; x < MAP_SIZE; x += 100) {
@@ -150,6 +166,7 @@
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(MAP_SIZE, y); ctx.stroke();
       }
 
+      // Еда
       foods.forEach(f => {
         ctx.beginPath();
         ctx.arc(f.x, f.y, f.size, 0, Math.PI * 2);
@@ -158,39 +175,4 @@
       });
 
       function drawSnake(head, segments, color, eyeAngle) {
-        for (let i = segments.length - 1; i >= 0; i--) {
-          ctx.beginPath();
-          ctx.arc(segments[i].x, segments[i].y, 12, 0, Math.PI * 2);
-          ctx.fillStyle = color;
-          ctx.fill();
-        }
-        ctx.beginPath();
-        ctx.arc(head.x, head.y, 14, 0, Math.PI * 2);
-        ctx.fillStyle = color;
-        ctx.fill();
-
-        const e1X = head.x + Math.cos(eyeAngle + 0.5) * 6;
-        const e1Y = head.y + Math.sin(eyeAngle + 0.5) * 6;
-        const e2X = head.x + Math.cos(eyeAngle - 0.5) * 6;
-        const e2Y = head.y + Math.sin(eyeAngle - 0.5) * 6;
-
-        ctx.fillStyle = '#fff';
-        ctx.beginPath(); ctx.arc(e1X, e1Y, 3, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.arc(e2X, e2Y, 3, 0, Math.PI * 2); ctx.fill();
-      }
-
-      drawSnake(myHead, mySegments, myColor, angle);
-
-      Object.values(players).forEach(p => {
-        drawSnake(p.head, p.segments, p.color, p.angle);
-      });
-
-      ctx.restore();
-
-      requestAnimationFrame(gameLoop);
-    }
-
-    gameLoop();
-  </script>
-</body>
-</html>
+        for (let i = segments.length - 1; i >= 0; i
