@@ -1,6 +1,6 @@
 import random
 import string
-from flask import Flask, render_template, request
+from flask import Flask, render_template_string
 from flask_socketio import SocketIO, join_room, emit
 
 app = Flask(__name__)
@@ -10,9 +10,447 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 rooms = {}
 WORLD_SIZE = 5000
 
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Snake.io Online</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; overflow: hidden; }
+        body { background: #1a1a2e; font-family: 'Arial', sans-serif; color: white; }
+        #gameCanvas { display: block; background: radial-gradient(circle at center, #16213e 0%, #0f0f23 100%); }
+        .ui { position: fixed; pointer-events: none; }
+        .top-left { top: 20px; left: 20px; }
+        .top-right { top: 20px; right: 20px; text-align: right; }
+        .bottom { bottom: 20px; left: 50%; transform: translateX(-50%); width: 90%; max-width: 600px; }
+        .score { font-size: 24px; font-weight: bold; text-shadow: 0 0 10px rgba(0,255,136,0.5); }
+        .leaderboard { background: rgba(0,0,0,0.7); padding: 15px; border-radius: 10px; min-width: 200px; }
+        .leaderboard h3 { margin-bottom: 10px; color: #ffd700; font-size: 14px; }
+        .lb-player { display: flex; justify-content: space-between; padding: 5px 0; font-size: 13px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        .lb-player.me { color: #00ff88; font-weight: bold; }
+        .chat { background: rgba(0,0,0,0.7); padding: 10px; border-radius: 10px; pointer-events: auto; }
+        .chat-messages { height: 100px; overflow-y: auto; margin-bottom: 10px; font-size: 13px; }
+        .chat-messages div { margin: 3px 0; word-break: break-word; }
+        .chat-messages .system { color: #ff6b6b; font-style: italic; }
+        .chat-input { display: flex; gap: 10px; }
+        .chat-input input { flex: 1; padding: 8px 15px; border: none; border-radius: 20px; background: rgba(255,255,255,0.1); color: white; outline: none; }
+        .chat-input button { padding: 8px 20px; border: none; border-radius: 20px; background: #00ff88; color: #000; font-weight: bold; cursor: pointer; }
+        .menu { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 100; }
+        .menu h1 { font-size: 64px; background: linear-gradient(45deg, #00ff88, #00ccff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 30px; text-transform: uppercase; letter-spacing: 5px; }
+        .menu-input { padding: 15px 30px; font-size: 18px; border: 2px solid #00ff88; border-radius: 30px; background: rgba(0,0,0,0.5); color: white; outline: none; margin: 10px; width: 300px; text-align: center; }
+        .menu-btn { padding: 15px 60px; font-size: 20px; border: none; border-radius: 30px; background: linear-gradient(45deg, #00ff88, #00cc6a); color: #000; font-weight: bold; cursor: pointer; margin-top: 20px; transition: transform 0.2s; }
+        .menu-btn:hover { transform: scale(1.1); }
+        .boost-indicator { position: fixed; bottom: 150px; left: 50%; transform: translateX(-50%); color: #ffaa00; font-weight: bold; opacity: 0; transition: opacity 0.3s; }
+        .boost-indicator.active { opacity: 1; }
+        .coords { position: fixed; bottom: 20px; right: 20px; font-size: 12px; color: rgba(255,255,255,0.3); }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <div class="ui top-left">
+        <div class="score">Длина: <span id="score">10</span></div>
+        <div style="font-size: 12px; color: rgba(255,255,255,0.5); margin-top: 5px;">
+            Игроков онлайн: <span id="playerCount">1</span>
+        </div>
+    </div>
+
+    <div class="ui top-right">
+        <div class="leaderboard">
+            <h3>🏆 ТОП 10</h3>
+            <div id="leaderboard"></div>
+        </div>
+    </div>
+
+    <div class="ui bottom">
+        <div class="chat">
+            <div class="chat-messages" id="chatMessages"></div>
+            <div class="chat-input">
+                <input type="text" id="chatInput" placeholder="Нажми Enter для чата..." maxlength="50">
+                <button onclick="sendChat()">➤</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="boost-indicator" id="boostText">⚡ УСКОРЕНИЕ!</div>
+    <div class="coords" id="coords">X: 0 Y: 0</div>
+
+    <div class="menu" id="menu">
+        <h1>SNAKE.IO</h1>
+        <input type="text" class="menu-input" id="nickInput" placeholder="Твой ник" value="Player" maxlength="15">
+        <input type="text" class="menu-input" id="roomInput" placeholder="Комната" value="snakeio">
+        <button class="menu-btn" onclick="startGame()">ИГРАТЬ</button>
+        <div style="margin-top: 30px; color: rgba(255,255,255,0.5); font-size: 14px;">
+            🖱️ Мышь — направление | ЛКМ/Пробел — ускорение<br>
+            💀 Врезайся в других чтобы уничтожить их<br>
+            ⚡ Ускорение уменьшает длину :)
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        const WORLD_SIZE = 5000;
+        const BASE_RADIUS = 15;
+        const SPEED_NORMAL = 3;
+        const SPEED_BOOST = 6;
+        const BOOST_COST = 0.5;
+        
+        let player = {
+            id: null,
+            name: '',
+            segments: [],
+            angle: 0,
+            radius: BASE_RADIUS,
+            color: '#00ff88',
+            score: 10,
+            boosting: false,
+            dead: false,
+            x: WORLD_SIZE / 2,
+            y: WORLD_SIZE / 2
+        };
+        
+        let camera = { x: 0, y: 0 };
+        let others = {};
+        let foods = [];
+        let particles = [];
+        let mouseX = 0, mouseY = 0;
+        
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        function initSnake() {
+            player.segments = [];
+            for (let i = 0; i < player.score; i++) {
+                player.segments.push({
+                    x: player.x - i * (player.radius * 0.5),
+                    y: player.y
+                });
+            }
+        }
+        
+        function startGame() {
+            player.name = document.getElementById('nickInput').value || 'Player';
+            const room = document.getElementById('roomInput').value || 'snakeio';
+            
+            socket.emit('join', { name: player.name, room });
+            document.getElementById('menu').classList.add('hidden');
+        }
+
+        socket.on('init', (data) => {
+            player.id = data.id;
+            foods = data.foods;
+            initSnake();
+            gameLoop();
+        });
+
+        socket.on('state', (serverPlayers) => {
+            others = serverPlayers;
+            if (player.id && others[player.id]) {
+                delete others[player.id];
+            }
+        });
+
+        socket.on('foodEaten', (data) => {
+            foods = foods.filter(f => f.id !== data.removedId);
+            foods.push(data.newFood);
+        });
+
+        socket.on('playerDeath', (data) => {
+            data.droppedFood.forEach(f => foods.push(f));
+            addChatMessage('', `💀 ${data.name} погиб!`, true);
+        });
+
+        socket.on('playerLeave', (id) => {
+            delete others[id];
+        });
+
+        socket.on('chat', (data) => {
+            addChatMessage(data.name, data.text, false);
+        });
+
+        function sendChat() {
+            const input = document.getElementById('chatInput');
+            const text = input.value.trim();
+            if (!text) return;
+            socket.emit('chat', text);
+            input.value = '';
+        }
+        
+        document.getElementById('chatInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendChat();
+        });
+        
+        function addChatMessage(name, text, isSystem) {
+            const div = document.createElement('div');
+            if (isSystem) {
+                div.className = 'system';
+                div.textContent = text;
+            } else {
+                div.innerHTML = `<strong style="color: ${name === player.name ? '#00ff88' : '#fff'}">${name}:</strong> ${text}`;
+            }
+            const container = document.getElementById('chatMessages');
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+            if (container.children.length > 50) container.removeChild(container.firstChild);
+        }
+        
+        canvas.addEventListener('mousemove', (e) => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+        });
+        
+        canvas.addEventListener('mousedown', () => player.boosting = true);
+        canvas.addEventListener('mouseup', () => player.boosting = false);
+        document.addEventListener('keydown', (e) => { if (e.code === 'Space') player.boosting = true; });
+        document.addEventListener('keyup', (e) => { if (e.code === 'Space') player.boosting = false; });
+        
+        function update() {
+            if (player.dead) return;
+            
+            const screenX = player.x - camera.x;
+            const screenY = player.y - camera.y;
+            player.angle = Math.atan2(mouseY - screenY, mouseX - screenX);
+            
+            let speed = player.boosting ? SPEED_BOOST : SPEED_NORMAL;
+            
+            if (player.boosting && player.score > 5) {
+                player.score -= BOOST_COST;
+                if (Math.random() < 0.3) {
+                    particles.push({
+                        x: player.segments[player.segments.length-1].x,
+                        y: player.segments[player.segments.length-1].y,
+                        vx: (Math.random() - 0.5) * 4,
+                        vy: (Math.random() - 0.5) * 4,
+                        life: 30,
+                        color: player.color
+                    });
+                }
+            }
+            
+            const head = player.segments[0];
+            const newHead = {
+                x: Math.max(player.radius, Math.min(WORLD_SIZE - player.radius, head.x + Math.cos(player.angle) * speed)),
+                y: Math.max(player.radius, Math.min(WORLD_SIZE - player.radius, head.y + Math.sin(player.angle) * speed))
+            };
+            
+            player.x = newHead.x;
+            player.y = newHead.y;
+            player.segments.unshift(newHead);
+            
+            while (player.segments.length > player.score) {
+                player.segments.pop();
+            }
+            
+            for (let i = foods.length - 1; i >= 0; i--) {
+                const food = foods[i];
+                if (Math.hypot(newHead.x - food.x, newHead.y - food.y) < player.radius + food.radius) {
+                    player.score += Math.floor(food.radius);
+                    socket.emit('eatFood', food.id);
+                    break;
+                }
+            }
+            
+            for (let id in others) {
+                const other = others[id];
+                if (!other.segments) continue;
+                for (let seg of other.segments) {
+                    if (Math.hypot(newHead.x - seg.x, newHead.y - seg.y) < player.radius + BASE_RADIUS * 0.8) {
+                        die();
+                        return;
+                    }
+                }
+            }
+            
+            camera.x = player.x - canvas.width / 2;
+            camera.y = player.y - canvas.height / 2;
+            
+            document.getElementById('score').textContent = Math.floor(player.score);
+            document.getElementById('coords').textContent = `X: ${Math.floor(player.x)} Y: ${Math.floor(player.y)}`;
+            document.getElementById('boostText').classList.toggle('active', player.boosting);
+            document.getElementById('playerCount').textContent = 1 + Object.keys(others).length;
+            
+            updateLeaderboard();
+            updateParticles();
+
+            socket.emit('update', {
+                x: player.x,
+                y: player.y,
+                angle: player.angle,
+                score: player.score,
+                segments: player.segments.slice(0, 30),
+                boosting: player.boosting
+            });
+        }
+        
+        function die() {
+            player.dead = true;
+            socket.emit('die', player.segments);
+            addChatMessage('', `💀 ${player.name} погиб!`, true);
+            
+            setTimeout(() => {
+                player.score = 10;
+                player.dead = false;
+                player.x = Math.random() * WORLD_SIZE;
+                player.y = Math.random() * WORLD_SIZE;
+                initSnake();
+            }, 3000);
+        }
+        
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx; p.y += p.vy; p.life--;
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+        }
+        
+        function updateLeaderboard() {
+            const all = [{name: player.name, score: player.score, me: true}];
+            for (let id in others) {
+                if (others[id] && others[id].name) {
+                    all.push({name: others[id].name, score: others[id].score, me: false});
+                }
+            }
+            all.sort((a, b) => b.score - a.score);
+            
+            const html = all.slice(0, 10).map((p, i) => `
+                <div class="lb-player ${p.me ? 'me' : ''}">
+                    <span>${i+1}. ${p.name}</span>
+                    <span>${Math.floor(p.score)}</span>
+                </div>
+            `).join('');
+            document.getElementById('leaderboard').innerHTML = html;
+        }
+        
+        function draw() {
+            ctx.fillStyle = '#0f0f23';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+            ctx.lineWidth = 1;
+            const gridSize = 100;
+            const offsetX = -camera.x % gridSize;
+            const offsetY = -camera.y % gridSize;
+            
+            for (let x = offsetX; x < canvas.width; x += gridSize) {
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+            }
+            for (let y = offsetY; y < canvas.height; y += gridSize) {
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+            }
+            
+            ctx.save();
+            ctx.translate(-camera.x, -camera.y);
+            
+            ctx.strokeStyle = '#ff0044';
+            ctx.lineWidth = 5;
+            ctx.strokeRect(0, 0, WORLD_SIZE, WORLD_SIZE);
+            
+            foods.forEach(food => {
+                if (food.x < camera.x - 50 || food.x > camera.x + canvas.width + 50 ||
+                    food.y < camera.y - 50 || food.y > camera.y + canvas.height + 50) return;
+                ctx.beginPath();
+                ctx.arc(food.x, food.y, food.radius, 0, Math.PI * 2);
+                ctx.fillStyle = food.color;
+                ctx.fill();
+            });
+            
+            particles.forEach(p => {
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = p.life / 30;
+                ctx.fill();
+            });
+            ctx.globalAlpha = 1;
+            
+            for (let id in others) {
+                const other = others[id];
+                if (other && other.segments) {
+                    drawSnake(other.segments, other.color, other.name, other.boosting);
+                }
+            }
+            
+            if (!player.dead) {
+                drawSnake(player.segments, player.color, player.name, player.boosting);
+            }
+            
+            ctx.restore();
+        }
+        
+        function drawSnake(segments, color, name, boosting) {
+            if (!segments || segments.length === 0) return;
+            ctx.shadowBlur = boosting ? 30 : 20;
+            ctx.shadowColor = color;
+            
+            for (let i = segments.length - 1; i >= 0; i--) {
+                const seg = segments[i];
+                const radius = BASE_RADIUS * (1 - i/segments.length * 0.3);
+                ctx.beginPath();
+                ctx.arc(seg.x, seg.y, radius, 0, Math.PI * 2);
+                ctx.fillStyle = color;
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+            ctx.shadowBlur = 0;
+            
+            const head = segments[0];
+            const angle = segments.length > 1 ? 
+                Math.atan2(segments[0].y - segments[1].y, segments[0].x - segments[1].x) : 0;
+            
+            const eyeOffset = 6;
+            const eyeX1 = head.x + Math.cos(angle - 0.5) * eyeOffset;
+            const eyeY1 = head.y + Math.sin(angle - 0.5) * eyeOffset;
+            const eyeX2 = head.x + Math.cos(angle + 0.5) * eyeOffset;
+            const eyeY2 = head.y + Math.sin(angle + 0.5) * eyeOffset;
+            
+            ctx.fillStyle = 'white';
+            ctx.beginPath();
+            ctx.arc(eyeX1, eyeY1, 4, 0, Math.PI * 2);
+            ctx.arc(eyeX2, eyeY2, 4, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.fillStyle = 'black';
+            ctx.beginPath();
+            ctx.arc(eyeX1 + Math.cos(angle)*2, eyeY1 + Math.sin(angle)*2, 2, 0, Math.PI * 2);
+            ctx.arc(eyeX2 + Math.cos(angle)*2, eyeY2 + Math.sin(angle)*2, 2, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 14px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(name, head.x, head.y - 25);
+            ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.font = '12px Arial';
+            ctx.fillText(segments.length, head.x, head.y - 10);
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+    </script>
+</body>
+</html>
+"""
+
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template_string(HTML_TEMPLATE)
 
 @socketio.on('join')
 def handle_join(data):
