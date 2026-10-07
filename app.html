@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Snake.io Online</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0d0f17; color: #fff; font-family: sans-serif; overflow: hidden; }
+    #gameCanvas { display: block; }
+    #ui {
+      position: absolute; top: 20px; left: 20px;
+      font-size: 20px; font-weight: bold; pointer-events: none;
+      text-shadow: 0 0 10px rgba(0,255,200,0.5);
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+  <div id="ui">Счёт: <span id="score">0</span></div>
+  <canvas id="gameCanvas"></canvas>
+
+  <script>
+    // Встроенные ключи из твоего кабинета Supabase
+    const SUPABASE_URL = "https://uqyrjxabimivgusqqvts.supabase.co";
+    const SUPABASE_ANON_KEY = "sb_publishable_fuYKNKGWY3C1sEpawVbwjg_Mjl0j..."; // Подставь сюда полный ключ из буфера обмена
+
+    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    window.addEventListener('resize', () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    });
+
+    const MAP_SIZE = 2500;
+    const myId = 'player_' + Math.random().toString(36).substr(2, 9);
+    const myColor = `hsl(${Math.floor(Math.random() * 360)}, 80%, 50%)`;
+
+    let mouse = { x: canvas.width / 2, y: canvas.height / 2 };
+    let myHead = {
+      x: Math.random() * (MAP_SIZE - 200) + 100,
+      y: Math.random() * (MAP_SIZE - 200) + 100
+    };
+    let mySegments = [];
+    let myScore = 0;
+    let angle = 0;
+
+    for (let i = 0; i < 10; i++) {
+      mySegments.push({ x: myHead.x - i * 10, y: myHead.y });
+    }
+
+    let players = {};
+    let foods = [];
+
+    for (let i = 0; i < 150; i++) {
+      foods.push({
+        id: i,
+        x: Math.random() * MAP_SIZE,
+        y: Math.random() * MAP_SIZE,
+        color: ['#ff4b4b', '#ffc832', '#3296ff', '#e650fa', '#00e682'][Math.floor(Math.random() * 5)],
+        size: Math.random() * 3 + 5
+      });
+    }
+
+    window.addEventListener('mousemove', e => {
+      mouse.x = e.clientX;
+      mouse.y = e.clientY;
+    });
+
+    const channel = supabaseClient.channel('game-room', {
+      config: { broadcast: { self: false } }
+    });
+
+    channel.on('broadcast', { event: 'player-update' }, payload => {
+      players[payload.id] = payload;
+    });
+
+    channel.subscribe();
+
+    setInterval(() => {
+      channel.send({
+        type: 'broadcast',
+        event: 'player-update',
+        payload: {
+          id: myId,
+          head: myHead,
+          segments: mySegments,
+          color: myColor,
+          angle: angle
+        }
+      });
+    }, 40);
+
+    function gameLoop() {
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      angle = Math.atan2(mouse.y - centerY, mouse.x - centerX);
+
+      myHead.x += Math.cos(angle) * 3.5;
+      myHead.y += Math.sin(angle) * 3.5;
+
+      myHead.x = Math.max(20, Math.min(MAP_SIZE - 20, myHead.x));
+      myHead.y = Math.max(20, Math.min(MAP_SIZE - 20, myHead.y));
+
+      let leader = myHead;
+      for (let seg of mySegments) {
+        let dx = leader.x - seg.x;
+        let dy = leader.y - seg.y;
+        let dist = Math.hypot(dx, dy);
+        if (dist > 10) {
+          seg.x += (dx / dist) * (dist - 10);
+          seg.y += (dy / dist) * (dist - 10);
+        }
+        leader = seg;
+      }
+
+      for (let f of foods) {
+        if (Math.hypot(myHead.x - f.x, myHead.y - f.y) < 14 + f.size) {
+          f.x = Math.random() * MAP_SIZE;
+          f.y = Math.random() * MAP_SIZE;
+          myScore += 10;
+          scoreEl.innerText = myScore;
+          
+          let last = mySegments[mySegments.length - 1];
+          mySegments.push({ x: last.x, y: last.y });
+        }
+      }
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const camX = myHead.x - canvas.width / 2;
+      const camY = myHead.y - canvas.height / 2;
+
+      ctx.save();
+      ctx.translate(-camX, -camY);
+
+      ctx.strokeStyle = '#181e2e';
+      ctx.lineWidth = 2;
+      for (let x = 0; x < MAP_SIZE; x += 100) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, MAP_SIZE); ctx.stroke();
+      }
+      for (let y = 0; y < MAP_SIZE; y += 100) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(MAP_SIZE, y); ctx.stroke();
+      }
+
+      foods.forEach(f => {
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, f.size, 0, Math.PI * 2);
+        ctx.fillStyle = f.color;
+        ctx.fill();
+      });
+
+      function drawSnake(head, segments, color, eyeAngle) {
+        for (let i = segments.length - 1; i >= 0; i--) {
+          ctx.beginPath();
+          ctx.arc(segments[i].x, segments[i].y, 12, 0, Math.PI * 2);
+          ctx.fillStyle = color;
+          ctx.fill();
+        }
+        ctx.beginPath();
+        ctx.arc(head.x, head.y, 14, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+
+        const e1X = head.x + Math.cos(eyeAngle + 0.5) * 6;
+        const e1Y = head.y + Math.sin(eyeAngle + 0.5) * 6;
+        const e2X = head.x + Math.cos(eyeAngle - 0.5) * 6;
+        const e2Y = head.y + Math.sin(eyeAngle - 0.5) * 6;
+
+        ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(e1X, e1Y, 3, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(e2X, e2Y, 3, 0, Math.PI * 2); ctx.fill();
+      }
+
+      drawSnake(myHead, mySegments, myColor, angle);
+
+      Object.values(players).forEach(p => {
+        drawSnake(p.head, p.segments, p.color, p.angle);
+      });
+
+      ctx.restore();
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    gameLoop();
+  </script>
+</body>
+</html>
