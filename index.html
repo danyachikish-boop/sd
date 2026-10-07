@@ -1,312 +1,81 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Snake.io WebRTC Battle</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; overflow: hidden; background: #0d0f17; color: #fff; font-family: sans-serif; }
-    #gameCanvas { display: block; width: 100vw; height: 100vh; }
-    
-    #ui {
-      position: absolute; top: 20px; left: 20px;
-      font-size: 18px; font-weight: bold; pointer-events: none;
-      text-shadow: 0 0 10px rgba(0,255,200,0.5);
-      display: flex; flex-direction: column; gap: 8px; z-index: 5;
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: { origin: "*" }
+});
+
+app.use(express.static(__dirname));
+
+const MAP_SIZE = 2500;
+let players = {};
+let foods = [];
+
+// Генерация еды на сервере
+for (let i = 0; i < 200; i++) {
+  foods.push({
+    id: i,
+    x: Math.random() * MAP_SIZE,
+    y: Math.random() * MAP_SIZE,
+    color: ['#ff4b4b', '#ffc832', '#3296ff', '#e650fa', '#00e682'][Math.floor(Math.random() * 5)],
+    size: Math.random() * 3 + 5
+  });
+}
+
+io.on('connection', (socket) => {
+  // Новый игрок подключается
+  players[socket.id] = {
+    id: socket.id,
+    head: { x: Math.random() * (MAP_SIZE - 400) + 200, y: Math.random() * (MAP_SIZE - 400) + 200 },
+    segments: [],
+    color: `hsl(${Math.floor(Math.random() * 360)}, 80%, 50%)`,
+    angle: 0,
+    score: 0
+  };
+
+  // Отправляем игроку начальное состояние
+  socket.emit('init', { id: socket.id, foods: foods });
+
+  // Обновление координат от игрока
+  socket.on('player-update', (data) => {
+    if (players[socket.id]) {
+      players[socket.id].head = data.head;
+      players[socket.id].segments = data.segments;
+      players[socket.id].angle = data.angle;
+      players[socket.id].score = data.score;
     }
+  });
 
-    #chat-container {
-      position: absolute; bottom: 20px; left: 20px;
-      width: 300px; height: 200px;
-      display: flex; flex-direction: column; gap: 6px;
-      z-index: 5; pointer-events: auto;
+  // Чат
+  socket.on('chat-message', (msg) => {
+    io.emit('chat-message', { sender: socket.id.substr(0, 5), text: msg });
+  });
+
+  // Поедание еды
+  socket.on('food-eaten', (foodId) => {
+    if (foods[foodId]) {
+      foods[foodId].x = Math.random() * MAP_SIZE;
+      foods[foodId].y = Math.random() * MAP_SIZE;
+      io.emit('food-respawn', { id: foodId, x: foods[foodId].x, y: foods[foodId].y });
     }
-    #chat-messages {
-      flex: 1; background: rgba(13, 15, 23, 0.7);
-      border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
-      padding: 8px; overflow-y: auto; font-size: 14px; display: flex; flex-direction: column; gap: 4px;
-    }
-    #chat-input {
-      background: rgba(26, 30, 43, 0.9); border: 1px solid #00e682;
-      color: #fff; padding: 8px 12px; border-radius: 6px; outline: none; font-size: 14px;
-    }
+  });
 
-    #lobby {
-      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-      background: rgba(13, 15, 23, 0.95); display: flex;
-      flex-direction: column; justify-content: center; align-items: center;
-      gap: 15px; z-index: 10;
-    }
-    input, button {
-      padding: 12px 20px; font-size: 16px; border-radius: 8px; border: none; outline: none;
-    }
-    input { background: #1a1e2b; color: #fff; border: 1px solid #00e682; text-align: center; }
-    button { background: #00e682; color: #000; font-weight: bold; cursor: pointer; }
-    button:hover { opacity: 0.9; }
-  </style>
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-</head>
-<body>
+  // Автоматическое удаление при отключении
+  socket.on('disconnect', () => {
+    delete players[socket.id];
+    io.emit('player-left', socket.id);
+  });
+});
 
-  <div id="lobby">
-    <h1>Snake.io WebRTC Battle</h1>
-    <p>Твой ID комнаты: <b id="myPeerId" style="color:#00e682;">Создание...</b></p>
-    <div style="display:flex; gap:10px;">
-      <input type="text" id="joinIdInput" placeholder="Введи ID хоста">
-      <button onclick="connectToHost()">Подключиться к комнате</button>
-    </div>
-    <button onclick="startRoom()" style="background:#3296ff; color:#fff;">Играть (Создать комнату)</button>
-  </div>
+// Отправка состояния всем игрокам 20 раз в секунду
+setInterval(() => {
+  io.emit('state-update', players);
+}, 50);
 
-  <div id="ui">
-    <div>Счёт: <span id="score">0</span></div>
-    <div style="color:#00e682;">Игроков онлайн: <span id="online">1</span></div>
-  </div>
-
-  <div id="chat-container">
-    <div id="chat-messages"></div>
-    <input type="text" id="chat-input" placeholder="Нажми Enter чтобы отправить..." onkeydown="handleChatKey(event)">
-  </div>
-
-  <canvas id="gameCanvas"></canvas>
-
-  <script>
-    const canvas = document.getElementById('gameCanvas');
-    const ctx = canvas.getContext('2d');
-    const scoreEl = document.getElementById('score');
-    const onlineEl = document.getElementById('online');
-    const lobbyEl = document.getElementById('lobby');
-    const chatMessages = document.getElementById('chat-messages');
-
-    function resize() {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-    }
-    resize();
-    window.addEventListener('resize', resize);
-
-    const MAP_SIZE = 2500;
-    const myId = 'player_' + Math.random().toString(36).substr(2, 6);
-    const myColor = `hsl(${Math.floor(Math.random() * 360)}, 80%, 50%)`;
-
-    let mouse = { x: canvas.width / 2, y: canvas.height / 2 };
-    let myHead = { x: Math.random() * (MAP_SIZE - 400) + 200, y: Math.random() * (MAP_SIZE - 400) + 200 };
-    let mySegments = [];
-    let myScore = 0;
-    let angle = 0;
-
-    function resetSnake() {
-      myHead = { x: Math.random() * (MAP_SIZE - 400) + 200, y: Math.random() * (MAP_SIZE - 400) + 200 };
-      mySegments = [];
-      myScore = 0;
-      scoreEl.innerText = 0;
-      for (let i = 0; i < 12; i++) {
-        mySegments.push({ x: myHead.x - i * 10, y: myHead.y });
-      }
-    }
-    resetSnake();
-
-    let players = {};
-    let foods = [];
-    let connections = {};
-
-    for (let i = 0; i < 200; i++) {
-      foods.push({
-        x: Math.random() * MAP_SIZE,
-        y: Math.random() * MAP_SIZE,
-        color: ['#ff4b4b', '#ffc832', '#3296ff', '#e650fa', '#00e682'][Math.floor(Math.random() * 5)],
-        size: Math.random() * 3 + 5
-      });
-    }
-
-    window.addEventListener('mousemove', e => {
-      mouse.x = e.clientX;
-      mouse.y = e.clientY;
-    });
-
-    // === WebRTC ПАКЕТЫ И ЧАТ ===
-    const peer = new Peer(myId);
-
-    peer.on('open', id => {
-      document.getElementById('myPeerId').innerText = id;
-    });
-
-    peer.on('connection', conn => {
-      setupConnection(conn);
-    });
-
-    function connectToHost() {
-      const hostId = document.getElementById('joinIdInput').value.trim();
-      if (hostId) {
-        const conn = peer.connect(hostId);
-        setupConnection(conn);
-        lobbyEl.style.display = 'none';
-      }
-    }
-
-    function startRoom() {
-      lobbyEl.style.display = 'none';
-    }
-
-    function setupConnection(conn) {
-      connections[conn.peer] = conn;
-      lobbyEl.style.display = 'none';
-
-      conn.on('data', data => {
-        if (data.type === 'game-state') {
-          players[data.id] = data;
-        } else if (data.type === 'leave') {
-          delete players[data.id];
-          delete connections[data.id];
-        } else if (data.type === 'chat') {
-          addChatMessage(data.sender, data.text);
-        }
-      });
-
-      conn.on('close', () => {
-        delete players[conn.peer];
-        delete connections[conn.peer];
-      });
-    }
-
-    function broadcast(data) {
-      Object.values(connections).forEach(conn => {
-        if (conn.open) conn.send(data);
-      });
-    }
-
-    // Сообщения чата
-    function addChatMessage(sender, text) {
-      const msg = document.createElement('div');
-      msg.innerHTML = `<b style="color:#00e682;">${sender}:</b> ${text}`;
-      chatMessages.appendChild(msg);
-      chatMessages.scrollTop = chatMessages.scrollHeight;
-    }
-
-    function handleChatKey(e) {
-      if (e.key === 'Enter') {
-        const input = document.getElementById('chat-input');
-        const text = input.value.trim();
-        if (text) {
-          addChatMessage('Я', text);
-          broadcast({ type: 'chat', sender: myId, text: text });
-          input.value = '';
-        }
-      }
-    }
-
-    // Отправка своего состояния
-    setInterval(() => {
-      broadcast({
-        type: 'game-state',
-        id: myId,
-        head: myHead,
-        segments: mySegments,
-        color: myColor,
-        angle: angle
-      });
-
-      onlineEl.innerText = Object.keys(connections).length + 1;
-    }, 40);
-
-    // Главный игровой цикл
-    function gameLoop() {
-      const centerX = canvas.width / 2;
-      const centerY = canvas.height / 2;
-      angle = Math.atan2(mouse.y - centerY, mouse.x - centerX);
-
-      myHead.x += Math.cos(angle) * 3.5;
-      myHead.y += Math.sin(angle) * 3.5;
-
-      myHead.x = Math.max(20, Math.min(MAP_SIZE - 20, myHead.x));
-      myHead.y = Math.max(20, Math.min(MAP_SIZE - 20, myHead.y));
-
-      let leader = myHead;
-      for (let seg of mySegments) {
-        let dx = leader.x - seg.x;
-        let dy = leader.y - seg.y;
-        let dist = Math.hypot(dx, dy);
-        if (dist > 10) {
-          seg.x += (dx / dist) * (dist - 10);
-          seg.y += (dy / dist) * (dist - 10);
-        }
-        leader = seg;
-      }
-
-      // 1. Поедание еды
-      for (let f of foods) {
-        if (Math.hypot(myHead.x - f.x, myHead.y - f.y) < 14 + f.size) {
-          f.x = Math.random() * MAP_SIZE;
-          f.y = Math.random() * MAP_SIZE;
-          myScore += 10;
-          scoreEl.innerText = myScore;
-          
-          let last = mySegments[mySegments.length - 1];
-          mySegments.push({ x: last.x, y: last.y });
-        }
-      }
-
-      // 2. Столкновение с туловищем чужих змей (Смерть)
-      Object.values(players).forEach(other => {
-        if (other.segments && other.id !== myId) {
-          other.segments.forEach(seg => {
-            if (Math.hypot(myHead.x - seg.x, myHead.y - seg.y) < 14) {
-              resetSnake(); // Смерть и возрождение
-            }
-          });
-        }
-      });
-
-      // 3. Отрисовка
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      const camX = myHead.x - canvas.width / 2;
-      const camY = myHead.y - canvas.height / 2;
-
-      ctx.save();
-      ctx.translate(-camX, -camY);
-
-      // Сетка
-      ctx.strokeStyle = '#181e2e';
-      ctx.lineWidth = 2;
-      for (let x = 0; x < MAP_SIZE; x += 100) {
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, MAP_SIZE); ctx.stroke();
-      }
-      for (let y = 0; y < MAP_SIZE; y += 100) {
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(MAP_SIZE, y); ctx.stroke();
-      }
-
-      // Еда
-      foods.forEach(f => {
-        ctx.beginPath();
-        ctx.arc(f.x, f.y, f.size, 0, Math.PI * 2);
-        ctx.fillStyle = f.color;
-        ctx.fill();
-      });
-
-      function drawSnake(head, segments, color, eyeAngle) {
-        if (!head || !segments) return;
-        for (let i = segments.length - 1; i >= 0; i--) {
-          ctx.beginPath();
-          ctx.arc(segments[i].x, segments[i].y, 12, 0, Math.PI * 2);
-          ctx.fillStyle = color;
-          ctx.fill();
-        }
-        ctx.beginPath();
-        ctx.arc(head.x, head.y, 14, 0, Math.PI * 2);
-        ctx.fillStyle = color;
-        ctx.fill();
-
-        const e1X = head.x + Math.cos(eyeAngle + 0.5) * 6;
-        const e1Y = head.y + Math.sin(eyeAngle + 0.5) * 6;
-        const e2X = head.x + Math.cos(eyeAngle - 0.5) * 6;
-        const e2Y = head.y + Math.sin(eyeAngle - 0.5) * 6;
-
-        ctx.fillStyle = '#fff';
-        ctx.beginPath(); ctx.arc(e1X, e1Y, 3, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.arc(e2X, e2Y, 3, 0, Math.PI * 2); ctx.fill();
-      }
-
-      // Рисуем себя
-      draw
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
