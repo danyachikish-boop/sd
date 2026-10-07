@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Snake.io Global Online</title>
+  <title>Snake.io Online</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #0d0f17; color: #fff; font-family: sans-serif; }
@@ -31,7 +31,6 @@
       color: #fff; padding: 8px 12px; border-radius: 6px; outline: none; font-size: 14px;
     }
   </style>
-  <script src="https://js.pusher.com/8.2.0/pusher.min.js"></script>
 </head>
 <body>
 
@@ -100,27 +99,21 @@
       mouse.y = e.clientY;
     });
 
-    // === ПУБЛИЧНЫЙ PUSHER КАНАЛ ДЛЯ ОНЛАЙНА ===
-    const pusher = new Pusher('app-key', {
-      wsHost: 'socketsbay.com',
-      wsPort: 1985,
-      wssPort: 1985,
-      enableStats: false,
-      disabledTransports: ['sockjs', 'xhr_streaming', 'xhr_polling'],
-      enabledTransports: ['ws', 'wss']
-    });
-
-    const channel = pusher.subscribe('snake-global-room');
-
-    channel.bind('client-state', data => {
-      if (data.id !== myId) {
-        players[data.id] = { ...data, lastSeen: Date.now() };
-      }
-    });
-
-    channel.bind('client-chat', data => {
-      addChatMessage(data.sender, data.text);
-    });
+    // === БЕЗОПАСНОЕ СОЕДИНЕНИЕ БЕЗ БЛОКИРОВКИ ИГРЫ ===
+    let ws = null;
+    try {
+      ws = new WebSocket('wss://echo.websocket.events');
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'state' && data.id !== myId) {
+            players[data.id] = { ...data, lastSeen: Date.now() };
+          } else if (data.type === 'chat') {
+            addChatMessage(data.sender, data.text);
+          }
+        } catch (e) {}
+      };
+    } catch (err) {}
 
     function addChatMessage(sender, text) {
       const el = document.createElement('div');
@@ -135,26 +128,30 @@
         const text = input.value.trim();
         if (text) {
           addChatMessage('Я', text);
-          channel.trigger('client-chat', { sender: myId, text: text });
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'chat', sender: myId, text: text }));
+          }
           input.value = '';
         }
       }
     }
 
-    // Отправка координат
     setInterval(() => {
-      channel.trigger('client-state', {
-        id: myId,
-        head: myHead,
-        segments: mySegments,
-        color: myColor,
-        angle: angle
-      });
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'state',
+          id: myId,
+          head: myHead,
+          segments: mySegments,
+          color: myColor,
+          angle: angle
+        }));
+      }
 
       const now = Date.now();
       let active = 1;
       Object.keys(players).forEach(id => {
-        if (now - players[id].lastSeen > 2000) {
+        if (now - players[id].lastSeen > 2500) {
           delete players[id];
         } else {
           active++;
@@ -163,6 +160,7 @@
       onlineEl.innerText = active;
     }, 50);
 
+    // === ИГРОВОЙ ЦИКЛ (РАБОТАЕТ ВСЕГДА) ===
     function gameLoop() {
       const centerX = canvas.width / 2;
       const centerY = canvas.height / 2;
@@ -186,6 +184,7 @@
         leader = seg;
       }
 
+      // 1. Еда
       foods.forEach(f => {
         if (Math.hypot(myHead.x - f.x, myHead.y - f.y) < 14 + f.size) {
           f.x = Math.random() * MAP_SIZE;
@@ -197,6 +196,7 @@
         }
       });
 
+      // 2. Смерть от чужого хвоста
       Object.values(players).forEach(other => {
         if (other.segments) {
           other.segments.forEach(seg => {
@@ -207,6 +207,7 @@
         }
       });
 
+      // 3. Отрисовка
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       const camX = myHead.x - canvas.width / 2;
@@ -215,6 +216,7 @@
       ctx.save();
       ctx.translate(-camX, -camY);
 
+      // Сетка
       ctx.strokeStyle = '#181e2e';
       ctx.lineWidth = 2;
       for (let x = 0; x < MAP_SIZE; x += 100) {
@@ -224,6 +226,7 @@
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(MAP_SIZE, y); ctx.stroke();
       }
 
+      // Еда
       foods.forEach(f => {
         ctx.beginPath();
         ctx.arc(f.x, f.y, f.size, 0, Math.PI * 2);
@@ -254,8 +257,10 @@
         ctx.beginPath(); ctx.arc(e2X, e2Y, 3, 0, Math.PI * 2); ctx.fill();
       }
 
+      // Отрисовка игрока
       drawSnake(myHead, mySegments, myColor, angle);
 
+      // Отрисовка всех остальных
       Object.values(players).forEach(p => {
         drawSnake(p.head, p.segments, p.color, p.angle);
       });
