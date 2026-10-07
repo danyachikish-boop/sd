@@ -1,276 +1,618 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Snake.io Online</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; overflow: hidden; background: #0d0f17; color: #fff; font-family: sans-serif; }
-    #gameCanvas { display: block; width: 100vw; height: 100vh; }
-    
-    #ui {
-      position: absolute; top: 20px; left: 20px;
-      font-size: 18px; font-weight: bold; pointer-events: none;
-      text-shadow: 0 0 10px rgba(0,255,200,0.5);
-      display: flex; flex-direction: column; gap: 8px; z-index: 5;
-    }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Змейка Online (ntfy)</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
-    #chat-container {
-      position: absolute; bottom: 20px; left: 20px;
-      width: 300px; height: 180px;
-      display: flex; flex-direction: column; gap: 6px; z-index: 5;
-    }
-    #chat-messages {
-      flex: 1; background: rgba(13, 15, 23, 0.7);
-      border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
-      padding: 8px; overflow-y: auto; font-size: 14px; display: flex; flex-direction: column; gap: 4px;
-    }
-    #chat-input {
-      background: rgba(26, 30, 43, 0.9); border: 1px solid #00e682;
-      color: #fff; padding: 8px 12px; border-radius: 6px; outline: none; font-size: 14px;
-    }
-  </style>
+        body {
+            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+            font-family: 'Segoe UI', sans-serif;
+            color: white;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+
+        h1 {
+            color: #00ff88;
+            text-shadow: 0 0 20px #00ff88;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+
+        .connection {
+            background: rgba(255,255,255,0.1);
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        input {
+            padding: 12px 20px;
+            border-radius: 25px;
+            border: 2px solid #00ff88;
+            background: rgba(0,0,0,0.5);
+            color: white;
+            font-size: 16px;
+            outline: none;
+            margin: 5px;
+            width: 200px;
+        }
+
+        button {
+            padding: 12px 30px;
+            border-radius: 25px;
+            border: none;
+            background: linear-gradient(45deg, #00ff88, #00cc6a);
+            color: #000;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin: 5px;
+        }
+
+        button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 20px #00ff88;
+        }
+
+        .status {
+            margin-top: 10px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            display: inline-block;
+        }
+
+        .status.connected {
+            background: #00ff88;
+            color: #000;
+        }
+
+        .status.disconnected {
+            background: #ff4444;
+            color: white;
+        }
+
+        .game-wrapper {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: flex-start;
+        }
+
+        canvas {
+            border: 3px solid #00ff88;
+            border-radius: 10px;
+            background: #0a0a0a;
+            box-shadow: 0 0 40px rgba(0, 255, 136, 0.3);
+        }
+
+        .panel {
+            background: rgba(255,255,255,0.1);
+            padding: 20px;
+            border-radius: 15px;
+            min-width: 280px;
+        }
+
+        .panel h3 {
+            color: #00ff88;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #00ff88;
+            padding-bottom: 10px;
+        }
+
+        .player {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            margin: 8px 0;
+            background: rgba(0,0,0,0.3);
+            border-radius: 10px;
+            transition: opacity 0.3s;
+        }
+
+        .player.dead {
+            opacity: 0.4;
+            text-decoration: line-through;
+        }
+
+        .player-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 2px solid white;
+        }
+
+        .player-name {
+            flex: 1;
+            font-size: 14px;
+        }
+
+        .player-score {
+            font-weight: bold;
+            color: #00ff88;
+        }
+
+        .controls {
+            margin-top: 20px;
+            text-align: center;
+            color: #888;
+            font-size: 14px;
+        }
+
+        .controls span {
+            display: inline-block;
+            background: rgba(255,255,255,0.1);
+            padding: 5px 10px;
+            border-radius: 5px;
+            margin: 2px;
+        }
+
+        .game-over {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.95);
+            padding: 40px;
+            border-radius: 20px;
+            text-align: center;
+            border: 3px solid #ff0044;
+            display: none;
+            z-index: 100;
+        }
+
+        .game-over h2 {
+            color: #ff0044;
+            margin-bottom: 20px;
+            font-size: 2em;
+        }
+
+        .game-over button {
+            margin-top: 15px;
+        }
+
+        .share-link {
+            margin-top: 15px;
+            padding: 10px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 10px;
+            word-break: break-all;
+            font-size: 12px;
+            color: #00ff88;
+        }
+
+        .instructions {
+            margin-top: 20px;
+            font-size: 13px;
+            color: #aaa;
+            line-height: 1.6;
+        }
+
+        .latency {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.7);
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 12px;
+        }
+    </style>
 </head>
 <body>
+    <h1>🐍 ЗМЕЙКА ONLINE</h1>
+    
+    <div class="connection">
+        <div>
+            <input type="text" id="roomInput" placeholder="Название комнаты" value="snake-room-123">
+            <input type="text" id="nameInput" placeholder="Твой ник" value="Игрок">
+            <button onclick="connect()">🎮 ПОДКЛЮЧИТЬСЯ</button>
+        </div>
+        <div class="status disconnected" id="status">❌ Не подключено</div>
+        <div class="share-link" id="shareLink" style="display:none;">
+            Ссылка для друзей: <span id="linkText"></span>
+        </div>
+    </div>
 
-  <div id="ui">
-    <div>Счёт: <span id="score">0</span></div>
-    <div style="color:#00e682;">Игроков онлайн: <span id="online">1</span></div>
-  </div>
+    <div class="game-wrapper" id="gameArea" style="display:none;">
+        <canvas id="game" width="600" height="600"></canvas>
+        
+        <div class="panel">
+            <h3>🏆 Таблица лидеров</h3>
+            <div id="playersList"></div>
+            
+            <div class="instructions">
+                <strong>Как играть:</strong><br>
+                • Стрелки или WASD — движение<br>
+                • Собирай зелёные квадраты<br>
+                • Не врезайся в стены и других<br>
+                • Выживи дольше всех!<br><br>
+                <em>Обновление через ntfy.sh — может быть небольшая задержка</em>
+            </div>
+        </div>
+    </div>
 
-  <div id="chat-container">
-    <div id="chat-messages"></div>
-    <input type="text" id="chat-input" placeholder="Чат (Enter отправить)..." onkeydown="handleChatKey(event)">
-  </div>
+    <div class="game-over" id="gameOver">
+        <h2>💀 ТЫ УМЕР</h2>
+        <p>Счёт: <span id="finalScore">0</span></p>
+        <button onclick="respawn()">🔄 ВОЗРОДИТЬСЯ</button>
+    </div>
 
-  <canvas id="gameCanvas"></canvas>
+    <div class="latency" id="latency" style="display:none;">Ping: -- ms</div>
 
-  <script>
-    const canvas = document.getElementById('gameCanvas');
-    const ctx = canvas.getContext('2d');
-    const scoreEl = document.getElementById('score');
-    const onlineEl = document.getElementById('online');
-    const chatMessages = document.getElementById('chat-messages');
-
-    function resize() {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-    }
-    resize();
-    window.addEventListener('resize', resize);
-
-    const MAP_SIZE = 2500;
-    const myId = 'p_' + Math.random().toString(36).substr(2, 6);
-    const myColor = `hsl(${Math.floor(Math.random() * 360)}, 80%, 50%)`;
-
-    let mouse = { x: canvas.width / 2, y: canvas.height / 2 };
-    let myHead = { x: Math.random() * (MAP_SIZE - 400) + 200, y: Math.random() * (MAP_SIZE - 400) + 200 };
-    let mySegments = [];
-    let myScore = 0;
-    let angle = 0;
-
-    function resetSnake() {
-      myHead = { x: Math.random() * (MAP_SIZE - 400) + 200, y: Math.random() * (MAP_SIZE - 400) + 200 };
-      mySegments = [];
-      myScore = 0;
-      scoreEl.innerText = 0;
-      for (let i = 0; i < 12; i++) {
-        mySegments.push({ x: myHead.x - i * 10, y: myHead.y });
-      }
-    }
-    resetSnake();
-
-    let players = {};
-    let foods = [];
-
-    for (let i = 0; i < 200; i++) {
-      foods.push({
-        id: i,
-        x: (i * 137) % MAP_SIZE,
-        y: (i * 269) % MAP_SIZE,
-        color: ['#ff4b4b', '#ffc832', '#3296ff', '#e650fa', '#00e682'][i % 5],
-        size: 6
-      });
-    }
-
-    window.addEventListener('mousemove', e => {
-      mouse.x = e.clientX;
-      mouse.y = e.clientY;
-    });
-
-    // === БЕЗОПАСНОЕ СОЕДИНЕНИЕ БЕЗ БЛОКИРОВКИ ИГРЫ ===
-    let ws = null;
-    try {
-      ws = new WebSocket('wss://echo.websocket.events');
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === 'state' && data.id !== myId) {
-            players[data.id] = { ...data, lastSeen: Date.now() };
-          } else if (data.type === 'chat') {
-            addChatMessage(data.sender, data.text);
-          }
-        } catch (e) {}
-      };
-    } catch (err) {}
-
-    function addChatMessage(sender, text) {
-      const el = document.createElement('div');
-      el.innerHTML = `<b style="color:#00e682;">${sender}:</b> ${text}`;
-      chatMessages.appendChild(el);
-      chatMessages.scrollTop = chatMessages.scrollHeight;
-    }
-
-    function handleChatKey(e) {
-      if (e.key === 'Enter') {
-        const input = document.getElementById('chat-input');
-        const text = input.value.trim();
-        if (text) {
-          addChatMessage('Я', text);
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'chat', sender: myId, text: text }));
-          }
-          input.value = '';
+    <script>
+        // Настройки
+        const GRID = 20;
+        const SIZE = 600;
+        const TILES = SIZE / GRID;
+        const NTFY_URL = 'https://ntfy.sh';
+        
+        // Состояние
+        let canvas, ctx;
+        let room = '';
+        let playerName = '';
+        let playerId = Math.random().toString(36).substr(2, 9);
+        let color = `hsl(${Math.random() * 360}, 70%, 50%)`;
+        let snake = [];
+        let direction = {x: GRID, y: 0};
+        let nextDirection = {x: GRID, y: 0};
+        let score = 0;
+        let dead = false;
+        let gameLoop;
+        let eventSource;
+        let players = {};
+        let foods = [];
+        let lastPing = Date.now();
+        
+        // Генерация случайной позиции
+        function randomPos() {
+            return Math.floor(Math.random() * TILES) * GRID;
         }
-      }
-    }
-
-    setInterval(() => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'state',
-          id: myId,
-          head: myHead,
-          segments: mySegments,
-          color: myColor,
-          angle: angle
-        }));
-      }
-
-      const now = Date.now();
-      let active = 1;
-      Object.keys(players).forEach(id => {
-        if (now - players[id].lastSeen > 2500) {
-          delete players[id];
-        } else {
-          active++;
+        
+        // Инициализация змейки
+        function initSnake() {
+            const x = randomPos();
+            const y = randomPos();
+            snake = [
+                {x, y},
+                {x: x - GRID, y},
+                {x: x - GRID*2, y}
+            ];
+            direction = {x: GRID, y: 0};
+            nextDirection = {x: GRID, y: 0};
+            score = 0;
+            dead = false;
+            document.getElementById('gameOver').style.display = 'none';
         }
-      });
-      onlineEl.innerText = active;
-    }, 50);
-
-    // === ИГРОВОЙ ЦИКЛ (РАБОТАЕТ ВСЕГДА) ===
-    function gameLoop() {
-      const centerX = canvas.width / 2;
-      const centerY = canvas.height / 2;
-      angle = Math.atan2(mouse.y - centerY, mouse.x - centerX);
-
-      myHead.x += Math.cos(angle) * 3.5;
-      myHead.y += Math.sin(angle) * 3.5;
-
-      myHead.x = Math.max(20, Math.min(MAP_SIZE - 20, myHead.x));
-      myHead.y = Math.max(20, Math.min(MAP_SIZE - 20, myHead.y));
-
-      let leader = myHead;
-      for (let seg of mySegments) {
-        let dx = leader.x - seg.x;
-        let dy = leader.y - seg.y;
-        let dist = Math.hypot(dx, dy);
-        if (dist > 10) {
-          seg.x += (dx / dist) * (dist - 10);
-          seg.y += (dy / dist) * (dist - 10);
+        
+        // Подключение к комнате
+        async function connect() {
+            room = document.getElementById('roomInput').value.trim() || 'snake-default';
+            playerName = document.getElementById('nameInput').value.trim() || 'Игрок';
+            
+            document.getElementById('gameArea').style.display = 'flex';
+            document.getElementById('status').className = 'status connected';
+            document.getElementById('status').textContent = '🟢 Подключено к ' + room;
+            document.getElementById('shareLink').style.display = 'block';
+            document.getElementById('linkText').textContent = window.location.href.split('?')[0] + '?room=' + room;
+            document.getElementById('latency').style.display = 'block';
+            
+            canvas = document.getElementById('game');
+            ctx = canvas.getContext('2d');
+            
+            initSnake();
+            
+            // Отправляем начальное состояние
+            broadcast();
+            
+            // Слушаем других игроков
+            startListening();
+            
+            // Игровой цикл
+            gameLoop = setInterval(update, 100);
+            
+            // Отправка пинга каждые 5 секунд
+            setInterval(() => {
+                if (!dead) {
+                    fetch(`${NTFY_URL}/${room}`, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            type: 'ping',
+                            id: playerId,
+                            time: Date.now()
+                        })
+                    });
+                }
+            }, 5000);
         }
-        leader = seg;
-      }
-
-      // 1. Еда
-      foods.forEach(f => {
-        if (Math.hypot(myHead.x - f.x, myHead.y - f.y) < 14 + f.size) {
-          f.x = Math.random() * MAP_SIZE;
-          f.y = Math.random() * MAP_SIZE;
-          myScore += 10;
-          scoreEl.innerText = myScore;
-          let last = mySegments[mySegments.length - 1];
-          mySegments.push({ x: last.x, y: last.y });
+        
+        // Отправка состояния
+        function broadcast() {
+            if (dead) return;
+            
+            fetch(`${NTFY_URL}/${room}`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    type: 'state',
+                    id: playerId,
+                    name: playerName,
+                    snake: snake,
+                    color: color,
+                    score: score,
+                    dead: dead,
+                    food: foods.length > 0 ? foods[0] : null
+                })
+            }).catch(() => {});
         }
-      });
-
-      // 2. Смерть от чужого хвоста
-      Object.values(players).forEach(other => {
-        if (other.segments) {
-          other.segments.forEach(seg => {
-            if (Math.hypot(myHead.x - seg.x, myHead.y - seg.y) < 14) {
-              resetSnake();
+        
+        // Прослушивание канала
+        function startListening() {
+            if (eventSource) eventSource.close();
+            
+            eventSource = new EventSource(`${NTFY_URL}/${room}/sse`);
+            
+            eventSource.onmessage = (e) => {
+                try {
+                    const data = JSON.parse(e.data);
+                    
+                    // Игнорируем свои сообщения
+                    if (data.id === playerId) return;
+                    
+                    if (data.type === 'state') {
+                        players[data.id] = {
+                            name: data.name,
+                            snake: data.snake,
+                            color: data.color,
+                            score: data.score,
+                            dead: data.dead,
+                            lastSeen: Date.now()
+                        };
+                        
+                        // Синхронизация еды
+                        if (data.food && foods.length === 0) {
+                            foods = [data.food];
+                        }
+                    } else if (data.type === 'ping') {
+                        // Расчёт задержки
+                        if (data.id !== playerId) {
+                            const latency = Date.now() - data.time;
+                            document.getElementById('latency').textContent = `Ping: ~${latency} ms`;
+                        }
+                    }
+                    
+                    updatePlayerList();
+                } catch (err) {}
+            };
+        }
+        
+        // Обновление списка игроков
+        function updatePlayerList() {
+            const list = document.getElementById('playersList');
+            const allPlayers = [{id: playerId, name: playerName, score, color, dead}, ...Object.entries(players).map(([id, p]) => ({id, ...p}))];
+            
+            allPlayers.sort((a, b) => b.score - a.score);
+            
+            list.innerHTML = allPlayers.map(p => `
+                <div class="player ${p.dead ? 'dead' : ''}">
+                    <div class="player-color" style="background: ${p.color}"></div>
+                    <div class="player-name">${p.name} ${p.id === playerId ? '(ты)' : ''}</div>
+                    <div class="player-score">${p.score}</div>
+                </div>
+            `).join('');
+        }
+        
+        // Обновление игры
+        function update() {
+            if (dead) return;
+            
+            // Применяем направление
+            direction = nextDirection;
+            
+            // Новая голова
+            const head = {
+                x: snake[0].x + direction.x,
+                y: snake[0].y + direction.y
+            };
+            
+            // Проверка стен
+            if (head.x < 0 || head.x >= SIZE || head.y < 0 || head.y >= SIZE) {
+                die();
+                return;
             }
-          });
+            
+            // Проверка столкновения с собой
+            for (let segment of snake) {
+                if (head.x === segment.x && head.y === segment.y) {
+                    die();
+                    return;
+                }
+            }
+            
+            // Проверка столкновения с другими
+            for (let id in players) {
+                const other = players[id];
+                if (other.dead) continue;
+                for (let segment of other.snake) {
+                    if (head.x === segment.x && head.y === segment.y) {
+                        die();
+                        return;
+                    }
+                }
+            }
+            
+            snake.unshift(head);
+            
+            // Проверка еды
+            let ate = false;
+            foods = foods.filter(food => {
+                if (head.x === food.x && head.y === food.y) {
+                    score += 10;
+                    ate = true;
+                    updatePlayerList();
+                    return false;
+                }
+                return true;
+            });
+            
+            if (!ate) {
+                snake.pop();
+            }
+            
+            // Генерация новой еды если нет
+            if (foods.length === 0 && Math.random() < 0.02) {
+                foods.push({x: randomPos(), y: randomPos()});
+            }
+            
+            // Отправка состояния
+            broadcast();
+            
+            // Отрисовка
+            draw();
         }
-      });
-
-      // 3. Отрисовка
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      const camX = myHead.x - canvas.width / 2;
-      const camY = myHead.y - canvas.height / 2;
-
-      ctx.save();
-      ctx.translate(-camX, -camY);
-
-      // Сетка
-      ctx.strokeStyle = '#181e2e';
-      ctx.lineWidth = 2;
-      for (let x = 0; x < MAP_SIZE; x += 100) {
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, MAP_SIZE); ctx.stroke();
-      }
-      for (let y = 0; y < MAP_SIZE; y += 100) {
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(MAP_SIZE, y); ctx.stroke();
-      }
-
-      // Еда
-      foods.forEach(f => {
-        ctx.beginPath();
-        ctx.arc(f.x, f.y, f.size, 0, Math.PI * 2);
-        ctx.fillStyle = f.color;
-        ctx.fill();
-      });
-
-      function drawSnake(head, segments, color, eyeAngle) {
-        if (!head || !segments) return;
-        for (let i = segments.length - 1; i >= 0; i--) {
-          ctx.beginPath();
-          ctx.arc(segments[i].x, segments[i].y, 12, 0, Math.PI * 2);
-          ctx.fillStyle = color;
-          ctx.fill();
+        
+        // Смерть
+        function die() {
+            dead = true;
+            document.getElementById('finalScore').textContent = score;
+            document.getElementById('gameOver').style.display = 'block';
+            broadcast();
+            updatePlayerList();
         }
-        ctx.beginPath();
-        ctx.arc(head.x, head.y, 14, 0, Math.PI * 2);
-        ctx.fillStyle = color;
-        ctx.fill();
-
-        const e1X = head.x + Math.cos(eyeAngle + 0.5) * 6;
-        const e1Y = head.y + Math.sin(eyeAngle + 0.5) * 6;
-        const e2X = head.x + Math.cos(eyeAngle - 0.5) * 6;
-        const e2Y = head.y + Math.sin(eyeAngle - 0.5) * 6;
-
-        ctx.fillStyle = '#fff';
-        ctx.beginPath(); ctx.arc(e1X, e1Y, 3, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.arc(e2X, e2Y, 3, 0, Math.PI * 2); ctx.fill();
-      }
-
-      // Отрисовка игрока
-      drawSnake(myHead, mySegments, myColor, angle);
-
-      // Отрисовка всех остальных
-      Object.values(players).forEach(p => {
-        drawSnake(p.head, p.segments, p.color, p.angle);
-      });
-
-      ctx.restore();
-
-      requestAnimationFrame(gameLoop);
-    }
-
-    gameLoop();
-  </script>
+        
+        // Возрождение
+        function respawn() {
+            initSnake();
+            broadcast();
+        }
+        
+        // Отрисовка
+        function draw() {
+            // Фон
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, SIZE, SIZE);
+            
+            // Сетка
+            ctx.strokeStyle = '#1a1a1a';
+            for (let i = 0; i < TILES; i++) {
+                ctx.beginPath();
+                ctx.moveTo(i * GRID, 0);
+                ctx.lineTo(i * GRID, SIZE);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(0, i * GRID);
+                ctx.lineTo(SIZE, i * GRID);
+                ctx.stroke();
+            }
+            
+            // Еда
+            foods.forEach(food => {
+                ctx.fillStyle = '#00ff88';
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = '#00ff88';
+                ctx.fillRect(food.x + 2, food.y + 2, GRID - 4, GRID - 4);
+                ctx.shadowBlur = 0;
+            });
+            
+            // Другие игроки
+            for (let id in players) {
+                const p = players[id];
+                if (p.dead) continue;
+                drawSnake(p.snake, p.color, false);
+            }
+            
+            // Своя змейка
+            if (!dead) {
+                drawSnake(snake, color, true);
+            }
+        }
+        
+        function drawSnake(snakeArr, snakeColor, isMe) {
+            snakeArr.forEach((segment, i) => {
+                if (i === 0) {
+                    ctx.fillStyle = snakeColor;
+                    ctx.shadowBlur = isMe ? 20 : 10;
+                    ctx.shadowColor = snakeColor;
+                } else {
+                    ctx.fillStyle = snakeColor;
+                    ctx.globalAlpha = 1 - (i / snakeArr.length) * 0.5;
+                    ctx.shadowBlur = 0;
+                }
+                
+                ctx.fillRect(segment.x + 1, segment.y + 1, GRID - 2, GRID - 2);
+                
+                // Глаза для головы
+                if (i === 0) {
+                    ctx.fillStyle = '#fff';
+                    ctx.globalAlpha = 1;
+                    const eyeSize = 4;
+                    const offset = 5;
+                    
+                    if (direction.x > 0) { // вправо
+                        ctx.fillRect(segment.x + GRID - 8, segment.y + offset, eyeSize, eyeSize);
+                        ctx.fillRect(segment.x + GRID - 8, segment.y + GRID - offset - eyeSize, eyeSize, eyeSize);
+                    } else if (direction.x < 0) { // влево
+                        ctx.fillRect(segment.x + 4, segment.y + offset, eyeSize, eyeSize);
+                        ctx.fillRect(segment.x + 4, segment.y + GRID - offset - eyeSize, eyeSize, eyeSize);
+                    } else if (direction.y < 0) { // вверх
+                        ctx.fillRect(segment.x + offset, segment.y + 4, eyeSize, eyeSize);
+                        ctx.fillRect(segment.x + GRID - offset - eyeSize, segment.y + 4, eyeSize, eyeSize);
+                    } else { // вниз
+                        ctx.fillRect(segment.x + offset, segment.y + GRID - 8, eyeSize, eyeSize);
+                        ctx.fillRect(segment.x + GRID - offset - eyeSize, segment.y + GRID - 8, eyeSize, eyeSize);
+                    }
+                }
+            });
+            ctx.globalAlpha = 1;
+            ctx.shadowBlur = 0;
+        }
+        
+        // Управление
+        document.addEventListener('keydown', (e) => {
+            if (!gameLoop || dead) return;
+            
+            switch(e.key) {
+                case 'ArrowUp':
+                case 'w':
+                case 'W':
+                    if (direction.y === 0) nextDirection = {x: 0, y: -GRID};
+                    break;
+                case 'ArrowDown':
+                case 's':
+                case 'S':
+                    if (direction.y === 0) nextDirection = {x: 0, y: GRID};
+                    break;
+                case 'ArrowLeft':
+                case 'a':
+                case 'A':
+                    if (direction.x === 0) nextDirection = {x: -GRID, y: 0};
+                    break;
+                case 'ArrowRight':
+                case 'd':
+                case 'D':
+                    if (direction.x === 0) nextDirection = {x: GRID, y: 0};
+                    break;
+            }
+        });
+        
+        // Проверка URL параметров
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('room')) {
+            document.getElementById('roomInput').value = urlParams.get('room');
+        }
+    </script>
 </body>
 </html>
