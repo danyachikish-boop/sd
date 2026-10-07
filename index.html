@@ -3,37 +3,56 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Snake.io Online (ntfy)</title>
+  <title>Snake.io P2P Online</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #0d0f17; color: #fff; font-family: sans-serif; overflow: hidden; }
     #gameCanvas { display: block; }
     #ui {
       position: absolute; top: 20px; left: 20px;
-      font-size: 20px; font-weight: bold; pointer-events: none;
+      font-size: 18px; font-weight: bold; pointer-events: none;
       text-shadow: 0 0 10px rgba(0,255,200,0.5);
-      display: flex; flex-direction: column; gap: 8px;
+      display: flex; flex-direction: column; gap: 8px; z-index: 5;
     }
-    .online-count { color: #00e682; }
+    #lobby {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(13, 15, 23, 0.95); display: flex;
+      flex-direction: column; justify-content: center; align-items: center;
+      gap: 15px; z-index: 10;
+    }
+    input, button {
+      padding: 12px 20px; font-size: 16px; border-radius: 8px; border: none; outline: none;
+    }
+    input { background: #1a1e2b; color: #fff; border: 1px solid #00e682; text-align: center; }
+    button { background: #00e682; color: #000; font-weight: bold; cursor: pointer; transition: 0.2s; }
+    button:hover { transform: scale(1.05); }
   </style>
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 </head>
 <body>
 
+  <div id="lobby">
+    <h1>Snake.io P2P</h1>
+    <p>Мой ID комнаты: <b id="myPeerId" style="color:#00e682;">Создание...</b></p>
+    <div style="display:flex; gap:10px;">
+      <input type="text" id="joinIdInput" placeholder="Введи ID друга">
+      <button onclick="connectToFriend()">Подключиться к другу</button>
+    </div>
+    <button onclick="startGameAlone()" style="background:#3296ff; color:#fff;">Играть одному / Ожидать друга</button>
+  </div>
+
   <div id="ui">
     <div>Счёт: <span id="score">0</span></div>
-    <div class="online-count">Игроков онлайн: <span id="online">1</span></div>
+    <div style="color:#00e682;">Игроков онлайн: <span id="online">1</span></div>
   </div>
   <canvas id="gameCanvas"></canvas>
 
   <script>
-    // Уникальная комната ntfy
-    const NTFY_TOPIC = "snake_io_danya_room_1337";
-    const NTFY_URL = `https://ntfy.sh/${NTFY_TOPIC}`;
-
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
     const scoreEl = document.getElementById('score');
     const onlineEl = document.getElementById('online');
+    const lobbyEl = document.getElementById('lobby');
 
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
@@ -43,7 +62,7 @@
     });
 
     const MAP_SIZE = 2500;
-    const myId = 'player_' + Math.random().toString(36).substr(2, 7);
+    const myId = 'player_' + Math.random().toString(36).substr(2, 6);
     const myColor = `hsl(${Math.floor(Math.random() * 360)}, 80%, 50%)`;
 
     let mouse = { x: canvas.width / 2, y: canvas.height / 2 };
@@ -61,6 +80,7 @@
 
     let players = {};
     let foods = [];
+    let connections = [];
 
     for (let i = 0; i < 150; i++) {
       foods.push({
@@ -77,22 +97,47 @@
       mouse.y = e.clientY;
     });
 
-    // === ПОДКЛЮЧЕНИЕ К NTFY ДЛЯ ПОЛУЧЕНИЯ ДАННЫХ ===
-    const eventSource = new EventSource(`${NTFY_URL}/sse`);
-    
-    eventSource.onmessage = (event) => {
-      try {
-        const rawData = JSON.parse(event.data);
-        if (rawData.message) {
-          const payload = JSON.parse(rawData.message);
-          if (payload.id && payload.id !== myId) {
-            players[payload.id] = { ...payload, lastSeen: Date.now() };
-          }
-        }
-      } catch (e) {}
-    };
+    // --- PEERJS СЕТЕВАЯ ЧАСТЬ ---
+    const peer = new Peer(myId);
 
-    // === ОТПРАВКА СВОИХ КООРДИНАТ (10 РАЗ В СЕКУНДУ) ===
+    peer.on('open', id => {
+      document.getElementById('myPeerId').innerText = id;
+    });
+
+    // Когда к нам кто-то подключается
+    peer.on('connection', conn => {
+      setupConnection(conn);
+    });
+
+    function connectToFriend() {
+      const friendId = document.getElementById('joinIdInput').value.trim();
+      if (friendId) {
+        const conn = peer.connect(friendId);
+        setupConnection(conn);
+        lobbyEl.style.display = 'none';
+      }
+    }
+
+    function setupConnection(conn) {
+      connections.push(conn);
+      lobbyEl.style.display = 'none';
+
+      conn.on('data', data => {
+        if (data.id) {
+          players[data.id] = data;
+        }
+      });
+
+      conn.on('close', () => {
+        connections = connections.filter(c => c !== conn);
+      });
+    }
+
+    function startGameAlone() {
+      lobbyEl.style.display = 'none';
+    }
+
+    // Отправка своих координат напрямую всем подключенным игрокам
     setInterval(() => {
       const payload = {
         id: myId,
@@ -102,27 +147,113 @@
         angle: angle
       };
 
-      // Прямая отправка через fetch
-      fetch(NTFY_URL, {
-        method: 'POST',
-        mode: 'cors',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify(payload)
-      }).catch(() => {});
-    }, 100);
+      connections.forEach(conn => {
+        if (conn.open) conn.send(payload);
+      });
 
-    // === ПРОВЕРКА ОНЛАЙНА И УДАЛЕНИЕ НЕАКТИВНЫХ ИГРОКОВ ===
-    setInterval(() => {
-      const now = Date.now();
-      let activeCount = 1; // Считаем себя
+      onlineEl.innerText = connections.length + 1;
+    }, 40);
 
-      Object.keys(players).forEach(id => {
-        // Если от игрока не было сообщений больше 2.5 секунд — он вышел
-        if (now - players[id].lastSeen > 2500) {
-          delete players[id];
-        } else {
-          activeCount++;
+    // Главный игровой цикл
+    function gameLoop() {
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      angle = Math.atan2(mouse.y - centerY, mouse.x - centerX);
+
+      myHead.x += Math.cos(angle) * 3.5;
+      myHead.y += Math.sin(angle) * 3.5;
+
+      myHead.x = Math.max(20, Math.min(MAP_SIZE - 20, myHead.x));
+      myHead.y = Math.max(20, Math.min(MAP_SIZE - 20, myHead.y));
+
+      let leader = myHead;
+      for (let seg of mySegments) {
+        let dx = leader.x - seg.x;
+        let dy = leader.y - seg.y;
+        let dist = Math.hypot(dx, dy);
+        if (dist > 10) {
+          seg.x += (dx / dist) * (dist - 10);
+          seg.y += (dy / dist) * (dist - 10);
+        }
+        leader = seg;
+      }
+
+      for (let f of foods) {
+        if (Math.hypot(myHead.x - f.x, myHead.y - f.y) < 14 + f.size) {
+          f.x = Math.random() * MAP_SIZE;
+          f.y = Math.random() * MAP_SIZE;
+          myScore += 10;
+          scoreEl.innerText = myScore;
+          
+          let last = mySegments[mySegments.length - 1];
+          mySegments.push({ x: last.x, y: last.y });
+        }
+      }
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const camX = myHead.x - canvas.width / 2;
+      const camY = myHead.y - canvas.height / 2;
+
+      ctx.save();
+      ctx.translate(-camX, -camY);
+
+      // Сетка
+      ctx.strokeStyle = '#181e2e';
+      ctx.lineWidth = 2;
+      for (let x = 0; x < MAP_SIZE; x += 100) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, MAP_SIZE); ctx.stroke();
+      }
+      for (let y = 0; y < MAP_SIZE; y += 100) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(MAP_SIZE, y); ctx.stroke();
+      }
+
+      // Еда
+      foods.forEach(f => {
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, f.size, 0, Math.PI * 2);
+        ctx.fillStyle = f.color;
+        ctx.fill();
+      });
+
+      function drawSnake(head, segments, color, eyeAngle) {
+        for (let i = segments.length - 1; i >= 0; i--) {
+          ctx.beginPath();
+          ctx.arc(segments[i].x, segments[i].y, 12, 0, Math.PI * 2);
+          ctx.fillStyle = color;
+          ctx.fill();
+        }
+        ctx.beginPath();
+        ctx.arc(head.x, head.y, 14, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+
+        const e1X = head.x + Math.cos(eyeAngle + 0.5) * 6;
+        const e1Y = head.y + Math.sin(eyeAngle + 0.5) * 6;
+        const e2X = head.x + Math.cos(eyeAngle - 0.5) * 6;
+        const e2Y = head.y + Math.sin(eyeAngle - 0.5) * 6;
+
+        ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(e1X, e1Y, 3, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(e2X, e2Y, 3, 0, Math.PI * 2); ctx.fill();
+      }
+
+      // Отрисовка себя
+      drawSnake(myHead, mySegments, myColor, angle);
+
+      // Отрисовка подключавшихся игроков
+      Object.values(players).forEach(p => {
+        if (p.head && p.segments) {
+          drawSnake(p.head, p.segments, p.color, p.angle);
         }
       });
 
-      onlineEl.innerText = activeCount
+      ctx.restore();
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    gameLoop();
+  </script>
+</body>
+</html>
